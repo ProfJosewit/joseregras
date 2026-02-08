@@ -1,0 +1,387 @@
+
+import React, { useState, useEffect, useRef } from 'react';
+import { GoogleGenAI, Modality } from "@google/genai";
+import { BOOK_CONTENT } from './constants';
+import { SignatureData } from './types';
+import { SignaturePad } from './components/SignaturePad';
+import { 
+  ChevronLeft, 
+  ChevronRight, 
+  Volume2, 
+  Printer, 
+  CheckCircle, 
+  ShieldCheck, 
+  User,
+  PenTool,
+  Loader2,
+  VolumeX,
+  Book
+} from 'lucide-react';
+
+// Auxiliares para processamento de áudio PCM bruto (conforme diretrizes Gemini API)
+function decode(base64: string) {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+
+const App: React.FC = () => {
+  const [currentPage, setCurrentPage] = useState(0);
+  const [isSigned, setIsSigned] = useState(false);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+
+  const [signatureData, setSignatureData] = useState<SignatureData>({
+    studentName: '',
+    studentSignature: '',
+    studentDate: new Date().toLocaleDateString('pt-BR'),
+    teacherSignature: '',
+    teacherDate: new Date().toLocaleDateString('pt-BR')
+  });
+
+  const totalPages = BOOK_CONTENT.pages.length + 1;
+
+  useEffect(() => {
+    const saved = localStorage.getItem('class_rules_v3');
+    if (saved) {
+      setSignatureData(JSON.parse(saved));
+      setIsSigned(true);
+    }
+    
+    return () => {
+      stopAudio();
+    };
+  }, []);
+
+  const stopAudio = () => {
+    if (audioSourceRef.current) {
+      try {
+        audioSourceRef.current.stop();
+      } catch (e) {}
+      audioSourceRef.current = null;
+    }
+    setIsPlaying(false);
+  };
+
+  const speakText = async () => {
+    if (isPlaying) {
+      stopAudio();
+      return;
+    }
+
+    setIsLoadingAudio(true);
+    try {
+      const isSignaturePage = currentPage === BOOK_CONTENT.pages.length;
+      let textToSpeak = "";
+
+      if (isSignaturePage) {
+        textToSpeak = "Página de compromisso. Eu me comprometo a respeitar as regras da nossa sala de aula, cuidar do espaço, respeitar as pessoas e ajudar a manter um ambiente seguro e acolhedor.";
+      } else {
+        const page = BOOK_CONTENT.pages[currentPage];
+        textToSpeak = `Página ${currentPage + 1}. ${page.title}. ${page.content.join(". ")}`;
+      }
+
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      }
+      
+      const ctx = audioContextRef.current;
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text: textToSpeak }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: 'Kore' },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
+        
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+        
+        source.onended = () => setIsPlaying(false);
+        
+        stopAudio();
+        source.start();
+        audioSourceRef.current = source;
+        setIsPlaying(true);
+      } else {
+        throw new Error("Dados de áudio vazios.");
+      }
+    } catch (error) {
+      console.error("Erro TTS:", error);
+      alert("Houve um erro na leitura. Verifique sua conexão.");
+    } finally {
+      setIsLoadingAudio(false);
+    }
+  };
+
+  const changePage = (dir: 'next' | 'prev') => {
+    if (isAnimating) return;
+    stopAudio();
+    setIsAnimating(true);
+    setTimeout(() => {
+      if (dir === 'next' && currentPage < totalPages - 1) setCurrentPage(currentPage + 1);
+      if (dir === 'prev' && currentPage > 0) setCurrentPage(currentPage - 1);
+      setIsAnimating(false);
+    }, 300);
+  };
+
+  const saveSignature = () => {
+    if (!signatureData.studentName || !signatureData.studentSignature) {
+      alert("Por favor, preencha o nome e a assinatura!");
+      return;
+    }
+    localStorage.setItem('class_rules_v3', JSON.stringify(signatureData));
+    setIsSigned(true);
+    alert("Compromisso registrado com sucesso!");
+  };
+
+  const handlePrint = () => window.print();
+
+  const renderPageContent = () => {
+    const isSignaturePage = currentPage === BOOK_CONTENT.pages.length;
+    const isFirstPage = currentPage === 0;
+
+    if (!isSignaturePage) {
+      const page = BOOK_CONTENT.pages[currentPage];
+      return (
+        <div className={`flex flex-col h-full ${isAnimating ? 'opacity-0 scale-95' : 'opacity-100 scale-100'} transition-all duration-300`}>
+          <div className="flex-1 p-8 md:p-12 overflow-y-auto flex flex-col relative">
+            
+            <button 
+              onClick={speakText}
+              disabled={isLoadingAudio}
+              className={`absolute top-6 right-6 p-4 rounded-full transition-all shadow-xl no-print z-10 flex items-center gap-2 font-bold ${isPlaying ? 'bg-red-500 text-white' : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'}`}
+            >
+              {isLoadingAudio ? <Loader2 className="animate-spin" size={24} /> : (isPlaying ? <><VolumeX size={24} /> Parar</> : <><Volume2 size={24} /> Ouvir</>)}
+            </button>
+
+            {isFirstPage ? (
+              <div className="flex flex-col items-center justify-center flex-1 text-center space-y-8">
+                <span className="text-9xl mb-4 transform hover:scale-110 transition-transform cursor-default">
+                  {page.emoji}
+                </span>
+                <h2 className="text-4xl md:text-5xl font-bold text-slate-800 uppercase tracking-tight border-b-8 border-blue-100 pb-4">
+                  {page.title}
+                </h2>
+                <div className="max-w-2xl space-y-6">
+                  {page.content.map((item, idx) => (
+                    <p key={idx} className="text-2xl text-slate-700 leading-relaxed font-medium">
+                      {item}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-4 mb-8">
+                  <span className="text-7xl">{page.emoji}</span>
+                  <h2 className="text-3xl md:text-4xl font-bold text-slate-800 uppercase tracking-tight">
+                    {page.title}
+                  </h2>
+                </div>
+                <ul className="space-y-6">
+                  {page.content.map((item, idx) => (
+                    <li key={idx} className={`flex items-start gap-4 text-xl text-slate-700 leading-relaxed group p-3 rounded-xl transition-colors ${isPlaying ? 'bg-blue-50/50' : ''}`}>
+                      <CheckCircle className={`mt-1 flex-shrink-0 transition-all ${isPlaying ? 'text-blue-500 scale-110' : 'text-slate-300'}`} size={24} />
+                      <span className="group-hover:text-blue-900 transition-colors">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+
+          </div>
+          <div className="p-4 text-center border-t border-slate-100 text-slate-400 font-bold uppercase tracking-widest text-xs">
+            PÁGINA {currentPage + 1} DE {totalPages}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className={`flex flex-col h-full ${isAnimating ? 'opacity-0 scale-95' : 'opacity-100 scale-100'} transition-all duration-300 p-8 md:p-12 overflow-y-auto relative`}>
+        <button 
+          onClick={speakText}
+          disabled={isLoadingAudio}
+          className={`absolute top-6 right-6 p-4 rounded-full transition-all shadow-xl no-print z-10 flex items-center gap-2 font-bold ${isPlaying ? 'bg-red-500 text-white' : 'bg-blue-600 text-white hover:bg-blue-700 active:scale-95'}`}
+        >
+          {isLoadingAudio ? <Loader2 className="animate-spin" size={24} /> : (isPlaying ? <><VolumeX size={24} /> Parar</> : <><Volume2 size={24} /> Ouvir Compromisso</>)}
+        </button>
+
+        <div className="text-center mb-8">
+          <span className="text-7xl mb-4 block">📜</span>
+          <h2 className="text-3xl font-bold text-slate-800 mb-4">Nosso Compromisso</h2>
+          <div className={`bg-white border-2 p-6 rounded-2xl shadow-inner italic text-xl text-slate-600 leading-relaxed transition-colors ${isPlaying ? 'border-blue-400 bg-blue-50/20' : 'border-blue-100'}`}>
+            “Eu me comprometo a respeitar as regras da nossa sala de aula, cuidar do espaço, respeitar as pessoas e ajudar a manter um ambiente seguro e acolhedor.”
+          </div>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-8">
+          <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
+            <div className="flex items-center gap-2 text-blue-800 mb-4 font-bold uppercase">
+              <User size={20} /> Aluno
+            </div>
+            <input
+              type="text"
+              placeholder="Nome completo"
+              value={signatureData.studentName}
+              onChange={(e) => setSignatureData({...signatureData, studentName: e.target.value})}
+              className="w-full p-3 mb-4 border-b-2 border-slate-200 focus:border-blue-500 outline-none text-lg transition-all"
+              disabled={isSigned}
+            />
+            {isSigned ? (
+              <div className="text-center py-4 bg-slate-50 rounded-xl border border-slate-100">
+                {signatureData.studentSignature && <img src={signatureData.studentSignature} alt="Assinatura" className="mx-auto max-h-20" />}
+                <p className="text-[10px] text-slate-400 mt-2 font-bold uppercase">Registrado em {signatureData.studentDate}</p>
+              </div>
+            ) : (
+              <SignaturePad label="" onSave={(s) => setSignatureData({...signatureData, studentSignature: s})} />
+            )}
+          </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-md border border-slate-200">
+            <div className="flex items-center gap-2 text-blue-800 mb-4 font-bold uppercase">
+              <PenTool size={20} /> Educador
+            </div>
+            <div className="h-32 flex flex-col items-center justify-center border-2 border-dashed border-slate-100 rounded-xl bg-slate-50">
+              {isSigned ? (
+                <>
+                  <p className="text-2xl font-serif text-slate-800 italic">José Marcelo</p>
+                  <p className="text-[10px] text-slate-400 mt-2 font-bold uppercase">Validado Digitalmente • {signatureData.teacherDate}</p>
+                </>
+              ) : (
+                <button 
+                  onClick={() => setSignatureData({...signatureData, teacherSignature: 'confirmed'})}
+                  className="bg-slate-800 text-white px-6 py-2 rounded-lg font-bold hover:bg-slate-700 transition-colors shadow-lg active:scale-95"
+                >
+                  Confirmar Presença
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {!isSigned ? (
+          <button
+            onClick={saveSignature}
+            className="mt-8 bg-blue-700 text-white py-4 rounded-xl font-bold text-xl shadow-xl hover:bg-blue-800 transition-all flex items-center justify-center gap-3 active:scale-95"
+          >
+            <ShieldCheck size={24} /> Finalizar e Assinar Livro
+          </button>
+        ) : (
+          <div className="flex gap-4 mt-8">
+            <button
+              onClick={handlePrint}
+              className="flex-1 no-print bg-emerald-600 text-white py-4 rounded-xl font-bold text-xl shadow-xl hover:bg-emerald-700 transition-all flex items-center justify-center gap-3"
+            >
+              <Printer size={24} /> Imprimir Comprovante
+            </button>
+            <button
+              onClick={() => { localStorage.removeItem('class_rules_v3'); window.location.reload(); }}
+              className="px-6 no-print bg-slate-200 text-slate-600 rounded-xl font-bold hover:bg-slate-300 transition-all"
+            >
+              Limpar
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-100">
+      {/* Cabeçalho */}
+      <header className="no-print w-full max-w-5xl flex justify-between items-center mb-6 px-6 bg-white/80 p-5 rounded-3xl backdrop-blur-lg shadow-xl border border-white">
+        <div className="flex items-center gap-4">
+          <div className="bg-blue-800 p-3 rounded-2xl text-white shadow-lg rotate-[-2deg]">
+            <Book size={32} />
+          </div>
+          <div>
+            <h1 className="text-2xl md:text-3xl font-black text-slate-800 uppercase tracking-tighter leading-none">Sala de aula regras</h1>
+            <p className="text-[10px] text-blue-600 font-bold uppercase tracking-[0.2em] mt-1">Guia de convivência escolar</p>
+          </div>
+        </div>
+        <div className="text-slate-700 font-bold text-lg md:text-xl flex flex-col items-end">
+          <span className="text-[10px] text-slate-400 uppercase tracking-widest font-black">Docente Responsável</span>
+          <span className="text-blue-900">Educador José Marcelo</span>
+        </div>
+      </header>
+
+      <div className="book-container w-full max-w-5xl h-[80vh] flex shadow-[0_40px_80px_-15px_rgba(0,0,0,0.4)] rounded-r-3xl overflow-hidden border-y-8 border-r-8 border-white bg-white relative">
+        <div className="no-print book-spine h-full hidden md:block z-20"></div>
+        
+        <div className="flex-1 relative book-page overflow-hidden">
+          {renderPageContent()}
+
+          <div className="no-print absolute bottom-6 right-6 flex gap-3 z-20">
+            <button 
+              onClick={() => changePage('prev')}
+              disabled={currentPage === 0}
+              className={`p-5 rounded-full shadow-2xl transition-all ${currentPage === 0 ? 'bg-slate-50 text-slate-200' : 'bg-white text-slate-800 hover:bg-blue-50 hover:scale-110 active:scale-90 border-2 border-slate-100'}`}
+            >
+              <ChevronLeft size={32} />
+            </button>
+            <button 
+              onClick={() => changePage('next')}
+              disabled={currentPage === totalPages - 1}
+              className={`p-5 rounded-full shadow-2xl transition-all ${currentPage === totalPages - 1 ? 'bg-slate-50 text-slate-200' : 'bg-white text-slate-800 hover:bg-blue-50 hover:scale-110 active:scale-90 border-2 border-slate-100'}`}
+            >
+              <ChevronRight size={32} />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <footer className="no-print mt-8 text-slate-500 text-xs font-black uppercase tracking-[0.5em] flex items-center gap-6 opacity-60">
+        <span>Respeito</span>
+        <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+        <span>Educação</span>
+        <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+        <span>Compromisso</span>
+      </footer>
+    </div>
+  );
+};
+
+export default App;
