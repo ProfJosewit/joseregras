@@ -1,3 +1,4 @@
+
 import React, { useState, useRef } from 'react';
 import { Volume2, VolumeX, ChevronLeft, ChevronRight, Printer, PenTool, Loader2 } from 'lucide-react';
 import SignaturePad from './components/SignaturePad';
