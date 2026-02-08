@@ -89,68 +89,29 @@ const App: React.FC = () => {
     setIsPlaying(false);
   };
 
-  const speakText = async () => {
+  const speakText = () => {
     if (isPlaying) {
-      stopAudio();
+      window.speechSynthesis.cancel();
+      setIsPlaying(false);
       return;
     }
 
-    setIsLoadingAudio(true);
-    try {
-      const isSignaturePage = currentPage === BOOK_CONTENT.pages.length;
-      let textToSpeak = "";
+    const page = BOOK_CONTENT.pages[currentPage];
+    const textoParaLer = `${page.title}. ${page.content}`;
 
-      if (isSignaturePage) {
-        textToSpeak = "Página de compromisso. Eu me comprometo a respeitar as regras da nossa sala de aula, cuidar do espaço, respeitar as pessoas e ajudar a manter um ambiente seguro e acolhedor.";
-      } else {
-        const page = BOOK_CONTENT.pages[currentPage];
-        textToSpeak = `Página ${currentPage + 1}. ${page.title}. ${page.content.join(". ")}`;
-      }
+    const utterance = new SpeechSynthesisUtterance(textoParaLer);
+    utterance.lang = 'pt-BR';
+    utterance.rate = 1.0;
 
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      }
-      
-      const ctx = audioContextRef.current;
-      if (ctx.state === 'suspended') {
-        await ctx.resume();
-      }
+    utterance.onstart = () => setIsPlaying(true);
+    utterance.onend = () => setIsPlaying(false);
+    utterance.onerror = () => {
+      setIsPlaying(false);
+      console.error("Erro na leitura");
+    };
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: textToSpeak }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: 'Kore' },
-            },
-          },
-        },
-      });
-
-      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (base64Audio) {
-        const audioBuffer = await decodeAudioData(decode(base64Audio), ctx, 24000, 1);
-        
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(ctx.destination);
-        
-        source.onended = () => setIsPlaying(false);
-        
-        stopAudio();
-        source.start();
-        audioSourceRef.current = source;
-        setIsPlaying(true);
-      } else {
-        throw new Error("Dados de áudio vazios.");
-      }
-    } catch (error) {
-      console.error("Erro TTS:", error);
-      alert("Houve um erro na leitura. Verifique sua conexão.");
-    } finally {
+    window.speechSynthesis.speak(utterance);
+  };
       setIsLoadingAudio(false);
     }
   };
