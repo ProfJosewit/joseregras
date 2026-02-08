@@ -1,24 +1,18 @@
 
-import React, { useState, useRef } from 'react';
-import { Volume2, VolumeX, ChevronLeft, ChevronRight, Printer, PenTool, Loader2 } from 'lucide-react';
-import SignaturePad from './components/SignaturePad';
+import React, { useState } from 'react';
+import { Volume2, VolumeX, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const BOOK_CONTENT = {
   pages: [
-    { title: "Bem-vindo", content: "Este é o nosso Livro de Regras Interativo para uma boa convivência escolar." },
-    { title: "Respeito", content: "Respeite professores e colegas. O respeito é a base de tudo." },
-    { title: "Organização", content: "Mantenha sua sala limpa e seus materiais organizados." },
-    { title: "Participação", content: "Participe das atividades e tire suas dúvidas sempre que precisar." }
+    { title: "BOAS-VINDAS!", content: "Olá, aluno(a)! As nossas regras ajudam todos a aprender melhor. Com elas, convivemos com respeito e mantemos nossa sala organizada." },
+    { title: "RESPEITO", content: "Respeite professores e colegas. Use palavras gentis e ouça quando os outros estiverem falando." },
+    { title: "FOCO E ESTUDO", content: "Traga sempre seu material e participe das atividades com dedicação. O conhecimento é o seu maior tesouro!" }
   ]
 };
 
-const App: React.FC = () => {
+export default function App() {
   const [currentPage, setCurrentPage] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [signatureData, setSignatureData] = useState({ studentName: '', studentSignature: '' });
-  const [isSigned, setIsSigned] = useState(false);
-
-  const totalPages = BOOK_CONTENT.pages.length + 1;
 
   const speakText = () => {
     if (isPlaying) {
@@ -28,8 +22,6 @@ const App: React.FC = () => {
     }
 
     const page = BOOK_CONTENT.pages[currentPage];
-    if (!page) return;
-
     const utterance = new SpeechSynthesisUtterance(`${page.title}. ${page.content}`);
     utterance.lang = 'pt-BR';
     utterance.onstart = () => setIsPlaying(true);
@@ -37,50 +29,36 @@ const App: React.FC = () => {
     window.speechSynthesis.speak(utterance);
   };
 
-  const changePage = (dir: 'next' | 'prev') => {
+  const next = () => {
     window.speechSynthesis.cancel();
     setIsPlaying(false);
-    if (dir === 'next' && currentPage < totalPages - 1) setCurrentPage(currentPage + 1);
-    if (dir === 'prev' && currentPage > 0) setCurrentPage(currentPage - 1);
+    if (currentPage < BOOK_CONTENT.pages.length - 1) setCurrentPage(currentPage + 1);
+  };
+
+  const prev = () => {
+    window.speechSynthesis.cancel();
+    setIsPlaying(false);
+    if (currentPage > 0) setCurrentPage(currentPage - 1);
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4 flex items-center justify-center">
-      <div className="bg-white shadow-2xl rounded-lg max-w-4xl w-full p-8 relative">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-2xl font-bold text-blue-800">Livro de Regras</h1>
-          <button onClick={speakText} className={`p-3 rounded-full ${isPlaying ? 'bg-red-500' : 'bg-blue-600'} text-white`}>
-            {isPlaying ? <VolumeX /> : <Volume2 />}
+    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+      <div className="bg-white p-8 rounded-2xl shadow-xl max-w-lg w-full text-center space-y-6">
+        <div className="flex justify-end">
+          <button onClick={speakText} className={`p-4 rounded-full ${isPlaying ? 'bg-red-500' : 'bg-blue-600'} text-white shadow-lg`}>
+            {isPlaying ? <VolumeX size={24} /> : <Volume2 size={24} />}
           </button>
         </div>
+        
+        <h1 className="text-3xl font-bold text-blue-900">{BOOK_CONTENT.pages[currentPage].title}</h1>
+        <p className="text-xl text-gray-700 leading-relaxed">{BOOK_CONTENT.pages[currentPage].content}</p>
 
-        {currentPage < BOOK_CONTENT.pages.length ? (
-          <div className="text-center py-10">
-            <h2 className="text-4xl font-bold mb-6">{BOOK_CONTENT.pages[currentPage].title}</h2>
-            <p className="text-xl text-gray-700">{BOOK_CONTENT.pages[currentPage].content}</p>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <h2 className="text-2xl font-bold">Assine seu compromisso</h2>
-            <input 
-              type="text" 
-              placeholder="Seu nome" 
-              className="w-full p-2 border rounded"
-              onChange={(e) => setSignatureData({...signatureData, studentName: e.target.value})}
-            />
-            <SignaturePad onSave={(sig) => setSignatureData({...signatureData, studentSignature: sig})} />
-            <button className="bg-green-600 text-white p-2 rounded w-full" onClick={() => alert("Salvo!")}>Confirmar</button>
-          </div>
-        )}
-
-        <div className="flex justify-between mt-10">
-          <button onClick={() => changePage('prev')} disabled={currentPage === 0} className="disabled:opacity-30"><ChevronLeft size={40}/></button>
-          <span className="text-gray-500">Página {currentPage + 1} de {totalPages}</span>
-          <button onClick={() => changePage('next')} disabled={currentPage === totalPages - 1} className="disabled:opacity-30"><ChevronRight size={40}/></button>
+        <div className="flex justify-between items-center pt-6">
+          <button onClick={prev} disabled={currentPage === 0} className="p-2 disabled:opacity-20"><ChevronLeft size={40} /></button>
+          <span className="font-bold text-gray-400">PÁGINA {currentPage + 1} DE {BOOK_CONTENT.pages.length}</span>
+          <button onClick={next} disabled={currentPage === BOOK_CONTENT.pages.length - 1} className="p-2 disabled:opacity-20"><ChevronRight size={40} /></button>
         </div>
       </div>
     </div>
   );
-};
-
-export default App;
+}
